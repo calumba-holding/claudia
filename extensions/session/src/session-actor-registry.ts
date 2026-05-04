@@ -123,6 +123,10 @@ class SessionPromptActor {
     return this.requestContext?.responseText.length || 0;
   }
 
+  getResponseText(): string {
+    return this.requestContext?.responseText || "";
+  }
+
   private clearPromptState(): void {
     this.requestContext = null;
     this.primaryContext = null;
@@ -174,6 +178,10 @@ export class SessionActorRegistry {
 
   getResponseTextLength(sessionId: string): number {
     return this.actors.get(sessionId)?.getResponseTextLength() || 0;
+  }
+
+  getResponseText(sessionId: string): string {
+    return this.actors.get(sessionId)?.getResponseText() || "";
   }
 
   clearSession(sessionId: string): void {

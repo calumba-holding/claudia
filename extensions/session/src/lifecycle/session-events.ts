@@ -1,6 +1,7 @@
-import { touchSession } from "../session-store";
+import { touchSession, updateSessionRuntime } from "../session-store";
 import { toRuntimeStatusFromSessionEvent } from "../session-types";
 import { getRuntime } from "../runtime";
+import { truncateAssistantPreview } from "./time-context";
 
 type SessionEvent = { eventName: string; sessionId: string; [key: string]: unknown };
 
@@ -28,6 +29,11 @@ export function wireSessionEvents(): () => void {
         rt.sessionActors.appendResponseText(sessionId, delta.text);
       }
     } else if (payload.type === "turn_stop") {
+      const assistantText = rt.sessionActors.getResponseText(sessionId);
+      updateSessionRuntime(sessionId, "completed", {
+        lastAssistantMessageAt: new Date().toISOString(),
+        lastAssistantMessagePreview: truncateAssistantPreview(assistantText),
+      });
       rt.sessionActors.completeTurn(
         sessionId,
         (payload as { stop_reason?: string }).stop_reason || "unknown",
