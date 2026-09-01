@@ -94,7 +94,7 @@ const DEFAULT_CONFIG: Required<MemoryConfig> = {
   conversationGapMinutes: 60,
   minConversationMessages: 5,
   timezone: "America/New_York",
-  model: "claude-sonnet-4-6",
+  model: "claude-sonnet-5",
   processBatchSize: 10,
   autoProcess: false,
   exclude: [],
