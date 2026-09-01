@@ -319,8 +319,9 @@ bun run typecheck        # tsgo (TypeScript native preview)
 
 ### Branch + Merge Workflow
 
-- Every change goes on a branch (`feat/...`, `fix/...`, `docs/...`, etc.) — never commit directly to `main`.
-- When the work is reviewed and validated, **fast-forward merge** into `main`: `git checkout main && git merge --ff-only <branch>`. No merge commits, no squash — keep history linear.
+- **Commit directly to `main` by default.** This is a single-user repo with one writer at a time, so a branch per change is busy work — it buys nothing and costs a merge dance every time.
+- **Branch only for genuinely overlapping work** — two changes in flight at once that would tangle in the same files. That is rare, and it is easy to branch after the fact (`git branch <name>` at the commit you want) if it turns out you needed one.
+- When a branch does exist, **fast-forward merge** into `main`: `git checkout main && git merge --ff-only <branch>`. No merge commits, no squash — keep history linear.
 - If the branch has fallen behind, **rebase onto `main`** before ff-merging so the ff succeeds cleanly.
 - After ff-merge, push `main` and delete the local branch.
 - **When the work resolves a GitHub issue, include `Closes #N` (or `Fixes #N`) in the commit message body** — that auto-closes the issue when `main` is pushed, no manual `gh issue close` needed.
