@@ -159,13 +159,49 @@ gh api repos/owner/repo/pulls/<PR>/comments --jq '.[] | {user: .user.login, path
 
 1. **Check existing review state** — See above. Don't duplicate work already done.
 2. **Get PR metadata** — `gh pr view <PR> --json title,body,files` for context
-3. **Read the diff** — `gh pr diff <PR>` to understand what changed
+3. **Read the diff** — `gh pr diff <PR>`. For a scoped diff inside the worktree use **three dots** (`git diff origin/main...HEAD -- <path>`); two dots invents deletions — see [Never diff a PR with two dots](#-never-diff-a-pr-with-two-dots).
 4. **Read the Linear ticket** — `linctl issue get <KEY>` if the PR mentions one. The ticket often lists the **expected files** for a feature; cross-check that they're all in the diff. Missing files = the PR description is making promises the diff doesn't keep.
 5. **Explore in worktree** — Read the full files, not just changed lines. Check callers, tests, related code.
 6. **Present findings** — Show review findings to Michael for discussion before submitting
 7. **Submit review** — For APPROVE/REQUEST_CHANGES use the **split process**: `gh comment review --event COMMENT` for inline comments, then native `gh pr review --approve` for the decision (see [Submitting Reviews](#submitting-reviews-recommended-pattern)). COMMENT-only reviews can stay in one `gh comment` call.
 8. **VERIFY both landed** — Query the API to confirm (a) inline comments attached AND (b) the review decision registered. **0 comments = silent failure; missing APPROVED = the decision didn't take** (see [Verifying a Submission](#verifying-a-submission)).
 9. **Clean up worktree** — Only after the review is live AND verified. Don't tear down on "I think we're done."
+
+## ⚠️ Never diff a PR with two dots
+
+`gh pr diff` is safe — GitHub computes it from the merge base. **Raw `git diff` in the worktree is
+not**, and this has produced a false finding twice.
+
+```bash
+git diff origin/main..HEAD    # WRONG — two dots, invents deletions
+git diff origin/main...HEAD   # RIGHT — three dots, the PR's actual changes
+```
+
+Two dots compares the two _tips_, so every commit that landed on `main` after the branch forked
+appears **as a deletion by the author**. Three dots compares from the merge base — what the PR
+actually changed.
+
+**Why it fires on every review rather than occasionally:** swarm's `main` moves ~49 commits/day
+(277/week). Every PR reviewed on 2026-09-02 sat 136–199 commits behind it. Being behind `main` is
+the normal state of every PR here, so the trap is armed by default. This is not bad luck.
+
+**Why it's dangerous rather than merely wrong:** the phantom deletions are real symbols with real
+consumers in `main`, so the false finding looks specific and verified. On #28528 it read exactly
+like a botched conflict resolution had dropped `RecordComparisonStatusSchema` plus three response
+fields — a serious accusation against the author, manufactured entirely by the diff command.
+
+**The check, which takes ten seconds.** GitHub's file list is merge-base computed, so it's the
+arbiter:
+
+```bash
+gh pr view <PR> --json files --jq '.files[] | "+\(.additions) -\(.deletions)\t\(.path)"'
+```
+
+If your diff shows deletions and this reports `-0`, your diff is wrong — not the PR. **Any finding
+of the form "this PR deletes / reverts / drops X" gets checked here before it reaches the review.**
+
+Related: `reference_stacked_pr_stale_base_semantic_drift`. Its ancestor check reports the stale base
+that arms this — but knowing the base is stale is not the same as remembering the diff will lie.
 
 ## Submitting Reviews (Recommended Pattern)
 
