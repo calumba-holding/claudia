@@ -71,12 +71,27 @@ the full reasoning, and the next reader of that function does not pay for it on 
 A regression test that passes against the _unfixed_ code is worse than no test — it certifies
 nothing while looking like proof.
 
+**Never use `git stash` for this.** `git stash push -- <path>` on a path with no uncommitted
+changes saves nothing and **fails silently** — so once the fix is committed, the "reverted" run is
+actually running against the fix and reports a meaningless green. Worse, the paired `git stash pop`
+then pops whatever unrelated stash happens to be at `stash@{0}`, straight into your tree. That
+happened: it popped a stranger's `do-not-keep` stash and left a conflicted file that blocked
+committing entirely, and rubocop failed on the conflict markers rather than on anything of mine.
+
+Use a plain file copy instead. No git, nothing to clobber, works identically whether the fix is
+committed or not:
+
 ```bash
-git stash push -q -- <the-fixed-source-file>   # revert ONLY the fix
-<run the spec>                                  # expect RED, every example
-git stash pop -q                                # restore
-<run the spec>                                  # expect GREEN, every example
+cp <file> /tmp/keep.rb                       # snapshot
+# neuter the fix in place (make the new method return nil, revert the changed line, …)
+<run the spec>                                # expect RED, EVERY example
+cp /tmp/keep.rb <file>                        # restore
+git diff --stat HEAD -- <file>                # MUST be empty — proves a clean restore
+<run the spec>                                # expect GREEN, whole file
 ```
+
+Always run the **whole spec file** on the green pass, not just the new context — the probe may have
+perturbed something else.
 
 **The trap this catches most often:** `expect { … }.not_to change(…)`. When the bug causes a
 rollback or a raise, _nothing changes_ — so the negative assertion goes green for entirely the wrong
@@ -108,6 +123,11 @@ gh comment review <PR> "Self-review — flagging the judgment calls before anyon
   ```bash
   gh api repos/<owner>/<repo>/pulls/<PR>/comments --jq '.[] | "\(.path):\(.line) → \(.body[0:70])"'
   ```
+
+**A `PostToolUse` formatter can mangle a `.rb` written to `/tmp`.** Writing a Ruby block to a temp
+file and splicing it in came back de-indented by two and with every double quote flipped to single —
+matching neither the target file nor rubocop. **Read back the region after splicing**, before running
+anything. Editing the real file directly with a script avoids the hook entirely.
 
 **dcg blocks the console/heredoc idioms.** Two separate rules, both false positives on our patterns:
 `heredoc.shell:launcher-unverified` (a markdown code fence whose line starts with a backtick) and
