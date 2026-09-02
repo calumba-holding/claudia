@@ -7,6 +7,10 @@ description: "MUST be used when reviewing GitHub PRs with inline code comments. 
 
 Two complementary `gh` CLI extensions for professional PR reviews from the terminal.
 
+> **Reviewing your own PR before requesting review?** Load `self-reviewing-prs` as well — it
+> covers which judgment calls earn an inline comment and the traps specific to self-review.
+> This skill stays the reference for the CLI mechanics.
+
 | Tool           | Purpose                                                           | Install                                            |
 | -------------- | ----------------------------------------------------------------- | -------------------------------------------------- |
 | `gh comment`   | **Writing** reviews — inline comments, batch, reactions           | **Use our fork:** `kiliman/gh-comment` (see below) |
