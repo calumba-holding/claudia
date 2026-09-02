@@ -78,6 +78,15 @@ deny_reason_for_command() {
     return 0
   fi
 
+  if [[ "$command" =~ (^|[[:space:]\;\&\|\(\)])git[[:space:]]+([^\;\&\|]*[[:space:]]+)?diff([[:space:]]|$) ]]; then
+    local diff_args="${command#*diff }"
+    diff_args="${diff_args%%-- *}"
+    if [[ " $diff_args" =~ [[:space:]][A-Za-z0-9_@{}~^/-][A-Za-z0-9_@{}~^/-]*\.\.([^.[:space:]]|$) ]]; then
+      printf "%s" "Blocked: 'git diff A..B' compares the two tips, so every commit B's base gained after the branch forked renders as a DELETION by the author — which reads as the PR reverting a teammate's work. Use three dots ('git diff A...B'), which diffs from the merge base; when B is already up to date the two are identical, so three dots is never worse. If a finding alleges a deletion, check 'gh pr view <PR> --json files' — merge-base computed, so -0 deletions means the diff is wrong, not the PR. Genuinely want tip-vs-tip? Use 'git diff A B' (space, no dots)."
+      return 0
+    fi
+  fi
+
   case "$command" in
     *"tmux kill-server"*|*"tmux "*'kill-server'*|*"tmux"*" kill-server"*)
       printf "%s" "Blocked: tmux kill-server would terminate the tmux-wrap session and may kill the agent CLI itself. Tell Michael tmux is broken and ask him to restart or repair the tmux wrapper/session instead."

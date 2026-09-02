@@ -95,4 +95,36 @@ describe("shell policy", () => {
       denyReason: null,
     });
   });
+
+  it("denies two-dot ranges in git diff", async () => {
+    const review = await policy("git diff origin/main..HEAD -- client/src/interfaces/foo.ts");
+    expect(review.denyReason).toContain("three dots");
+
+    const noPathspec = await policy("git diff origin/main..abc1234");
+    expect(noPathspec.denyReason).toContain("three dots");
+
+    // Global flags must not hide the subcommand behind their own value.
+    const dashC = await policy("git -C /repo diff main..HEAD");
+    expect(dashC.denyReason).toContain("three dots");
+
+    // Ancestor pairs are denied too, and correctly so: three-dot returns the
+    // identical result there, so the advice is never wrong.
+    const ancestor = await policy("git diff HEAD~2..HEAD");
+    expect(ancestor.denyReason).toContain("three dots");
+  });
+
+  it("does not deny three-dot diffs, git log ranges, or paths containing dots", async () => {
+    for (const command of [
+      "git diff origin/main...HEAD -- client/src/interfaces/foo.ts",
+      "git log --oneline origin/main..HEAD", // two-dot is correct for log
+      "git diff origin/main HEAD", // space form: the deliberate tip-vs-tip escape hatch
+      "git diff",
+      "git diff --staged",
+      "git diff main -- ../other/path",
+      "git diff main -- a/../b",
+      "echo 'git diff main..HEAD'",
+    ]) {
+      await expect(policy(command)).resolves.toMatchObject({ ok: true, denyReason: null });
+    }
+  });
 });
