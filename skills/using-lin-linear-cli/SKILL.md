@@ -1,6 +1,6 @@
 ---
 name: using-lin-linear-cli
-description: "MUST be used when creating, updating, searching, assigning, or commenting on Linear issues — anything beyond reading a known ticket ID. `lin` is a human-friendly wrapper over `linctl graphql` that resolves team/project/user names and issue identifiers to IDs internally, so you stop fumbling syntax. Covers child issues with parent links, assigning to other users, fuzzy user/team/project lookup, filtered search, the learned disambiguation cache, and the raw GraphQL escape hatch. Triggers on: linear ticket, create issue, child ticket, sub-issue, assign ticket, assign to, link parent, search linear, find tickets, linear comment, update issue, lin cli, linctl, who is on linear, ambiguous name linear."
+description: "MUST be used when creating, updating, searching, assigning, or commenting on Linear issues — anything beyond reading a known ticket ID. `lin` is a human-friendly wrapper over `linctl graphql` that resolves team/project/user names and issue identifiers to IDs internally, so you stop fumbling syntax. Covers child issues with parent links, related/spin-off issues, assigning to other users, fuzzy user/team/project/label lookup, filtered search, the learned disambiguation cache, and the raw GraphQL escape hatch. Triggers on: linear ticket, create issue, child ticket, sub-issue, spin-off ticket, related issue, relate tickets, assign ticket, assign to, link parent, add label, linear label, cooldown candidate, search linear, find tickets, linear comment, update issue, lin cli, linctl, who is on linear, ambiguous name linear."
 ---
 
 # Using `lin` — the Linear CLI
@@ -20,6 +20,7 @@ It shells out to `linctl graphql`, so it inherits linctl's existing auth — no 
 lin who <query>            # fuzzy user lookup (name/displayName/email) + their teams
 lin team <query>           # fuzzy team lookup (name or key)
 lin project <query>        # fuzzy project lookup (name)
+lin labels [query]         # fuzzy label lookup + the team that owns each
 lin get <id>               # show an issue (delegates to linctl)
 
 lin find [filters]         # search: -t/--team --project -a/--assignee -s/--state --query --limit --include-completed
@@ -27,6 +28,7 @@ lin new --title ... -t ... # create issue (full power)
 lin child <parent> ...     # create child issue — inherits parent's team + project automatically
 lin update <id> [opts]     # update title/assignee/state/parent/project/labels/priority
 lin comment <id> [opts]    # add a comment
+lin relate <a> <b>         # relate two issues (spin-offs — NOT --parent)
 
 lin cache [clear]          # show (or clear) the learned MRU cache
 lin gql '<query>' ['<vars-json>']   # raw GraphQL escape hatch
@@ -50,6 +52,33 @@ lin new --title "Fix bug" -t WEB --project "group" -a me --priority high
 # 5. Assign on update (same --assignee everywhere — no create/update flag drift)
 lin update BEE-20001 -a "Phil Mills" -s "In Review"
 ```
+
+## New issues land in Todo
+
+`lin new` / `lin child` set the state to **Todo** unless `--state` says otherwise. Team defaults vary — `Backlog` on some teams, `Triage` on others — and both are filtered out of the assignee's default views, so a ticket filed for someone that they never see is the same as one never filed. `--state` still overrides (including back to `Triage`). A team with no `Todo` state falls back to its own default rather than erroring, so this never blocks a create.
+
+## Spin-offs use `--related`, never `--parent`
+
+```bash
+lin new --title "Audit the pattern" -t BEE --related BEE-25139   # at create (comma-separated)
+lin relate BEE-25217 BEE-25139                                   # after the fact
+```
+
+A **child** auto-flips to Done when its parent closes — which silently closes work that isn't finished. Anything discovered _while_ doing a ticket, but not part of it, is **related**.
+
+## Read the echo — it IS the confirmation
+
+`new` and `update` print the fields they set, read back off the **server's response** rather than off the flags you passed:
+
+```
+✓ BEE-25218  lin smoke test
+  assignee: michael.carter
+  state:    Todo
+  labels:   Cooldown Candidate
+  related:  BEE-25217, BEE-25139
+```
+
+`update` prints only the fields that call touched. This exists so you can say a label applied because you _watched_ it apply — a fuzzy match landing one label over is otherwise invisible. **Don't re-query to verify; the echo already is the verification.**
 
 ## Name resolution rules (how ambiguity is handled)
 
@@ -85,9 +114,34 @@ The MRU (`projectMru` in the cache) is also fed whenever you **work a specific t
 
 **Don't hardcode the project** — infer it from the ticket you're working from or the conversation, pass a partial, and let the MRU do the disambiguating. `lin cache` shows the current MRU.
 
+## Labels: team-scoped, and `--labels` REPLACES
+
+**Look before you guess** — `lin labels [query]` shows each label with the team that owns it:
+
+```bash
+lin labels cooldown
+# Cooldown                       workspace
+# Cooldown Candidate             workspace
+# Cooldown updates               KB
+```
+
+Labels fuzzy-resolve like users and projects, but **team filtering runs first**, which is a deliberate divergence. Label names collide _exactly_ across teams — five teams each own a label literally named `Chore` — so checking for an exact name first would just pick one at random:
+
+1. **Team filter** — labels owned by a different team are dropped; workspace-wide labels (no team) stay eligible everywhere. If nothing survives, it fails and names the teams that _do_ own it.
+2. **Exact name** → use it, record to the MRU.
+3. **Recency (MRU, scoped team → global)** → auto-pick with an `ℹ …` note.
+4. Still ambiguous → exit 1 with candidates annotated by owning team.
+
+```bash
+lin update BEE-25217 --labels Chore
+# ✗ No label "Chore" available on BEE — it exists only on: WEB, COM, BUILD, DIG, POD
+```
+
+**⚠️ On `update`, `--labels` REPLACES the whole set — it does not append.** Pass every label the ticket should end with. A fuzzy query landing one label over doesn't just add the wrong one, it drops the right one: `--labels cooldown` exact-matches the label named `Cooldown` and silently removes `Cooldown Candidate`. The echo is what catches this, so read it.
+
 ## How learning works: success IS the learning
 
-There is **no explicit teach step** (no `--learn` flag). Every time a name resolves to exactly one user or project, `lin` records it to an MRU; the next ambiguous lookup uses that recency. The cache is "frozen intelligence" — you make the smart call once (by typing an exact name/email), and the dumb script replays it forever.
+There is **no explicit teach step** (no `--learn` flag). Every time a name resolves to exactly one user, project, or label, `lin` records it to an MRU; the next ambiguous lookup uses that recency. The cache is "frozen intelligence" — you make the smart call once (by typing an exact name/email), and the dumb script replays it forever.
 
 The flow when two people genuinely share a team:
 
@@ -97,7 +151,7 @@ lin child BEE-20001 --title "..." --assignee "Chris Smith"   # ✓ exact → res
 lin child BEE-20002 --title "..." --assignee chris      # ✓ auto-resolves Chris Smith (recency)
 ```
 
-**Scoping matters and is deliberate:** projects use one **global** MRU (you move between projects sequentially, so recency = current focus). Users are scoped **project → team → global**, recording into the most specific scope available. A global user MRU would silently mis-pick the same first-name across different projects — exactly the clever-but-silent failure to avoid. So `chris` learned in one project does **not** leak to another; it'll fail loud there until you resolve it once in that context.
+**Scoping matters and is deliberate:** projects use one **global** MRU (you move between projects sequentially, so recency = current focus). Users are scoped **project → team → global**, and labels **team → global** (labels belong to a team or the workspace, never a project), recording into the most specific scope available. A global user MRU would silently mis-pick the same first-name across different projects — exactly the clever-but-silent failure to avoid. So `chris` learned in one project does **not** leak to another; it'll fail loud there until you resolve it once in that context.
 
 ## Multi-line descriptions & comments
 
@@ -116,7 +170,7 @@ EOF
 
 ## Flags (kept close to linctl where they overlap)
 
-`-t/--team` · `--project` · `--parent` · `-a/--assignee` · `-m/--assign-me` · `-d/--description` · `--description-file` · `-b/--body` · `--body-file` · `-s/--state` · `--labels a,b` · `--priority none|urgent|high|normal|low|0-4` · `--query` · `--limit` · `--include-completed` · `-j/--json`
+`-t/--team` · `--project` · `--parent` · `--related a,b` · `-a/--assignee` · `-m/--assign-me` · `-d/--description` · `--description-file` · `-b/--body` · `--body-file` · `-s/--state` · `--labels a,b` · `--priority none|urgent|high|normal|low|0-4` · `--query` · `--limit` · `--include-completed` · `-j/--json`
 
 Use `-j/--json` when you need to parse output (e.g. grab `.id`/`.identifier` with `jq`).
 
@@ -141,7 +195,7 @@ lin dupe BEE-19635 BEE-19285 -b "shipped in PR #23756"          # same + post a 
 
 Order matters under the hood: Linear refuses to move an issue into the **Duplicate** workflow state unless the duplicate-of relation already exists (API rejects with `"missing duplicate relation"`). `lin dupe` does relation-then-state-then-optional-comment in the right order. The optional `-b` is recommended when the _why_ isn't obvious from the title — it's the human/AI reasoning the wrapper deliberately doesn't synthesize.
 
-If you ever need to do it by hand (different relation type, batched mutation, etc.) — note that `IssueRelationType` is a GraphQL enum, so the value goes in bare without quotes: `type: duplicate`.
+If you ever need to do it by hand (different relation type, batched mutation, etc.) — note that `IssueRelationType` is a GraphQL enum, so an **inline literal** goes in bare without quotes (`type: duplicate`). Passed through a typed variable it's an ordinary JSON string, which is how `lin dupe` and `lin relate` both do it.
 
 ## Extending it
 
