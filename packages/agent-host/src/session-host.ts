@@ -354,35 +354,57 @@ export class SessionHost extends EventEmitter {
   }
 
   /**
-   * Close all sessions — for graceful shutdown.
+   * Stop tracking a session, preferring `release()` over `close()` when the
+   * provider implements it.
    *
-   * Prefers `session.release()` over `close()` when the provider implements it,
-   * so CLI sessions preserve their tmux pane + claude process across
-   * agent-host restarts (reuse on next startup, no respawn or startup probes).
-   * SDK/Codex providers fall through to `close()` since their runtime lives
-   * in-process and dies with us anyway.
+   * `release()` drops our in-process state (proxy, JSONL tail, modal watcher)
+   * but leaves out-of-process runtime alive — for the CLI provider that means
+   * the tmux pane and the `claude` process keep running, so anything living
+   * *inside* that process survives: a `Monitor` watching a long job, a tool
+   * mid-flight. `close()` would kill the pane and take all of it down.
+   *
+   * SDK/Codex providers implement no `release()` and fall through to `close()`,
+   * since their runtime lives in-process and dies with us anyway.
+   *
+   * This is deliberately NOT what `close(sessionId)` does. An explicit close
+   * from a client means "tear it down"; this means "stop holding it".
    */
-  async closeAll(): Promise<void> {
-    const promises = Array.from(this.sessions.values()).map(async (session) => {
-      const sessionId = session.id;
-      try {
-        if (session.release) await session.release();
-        else await session.close();
-      } catch (error) {
-        log.warn("closeAll: error releasing session", {
-          sessionId: sessionId.slice(0, 8),
-          error: String(error),
-        });
-      }
-      this.sessions.delete(sessionId);
-      this.sessionAgents.delete(sessionId);
-    });
-    await Promise.all(promises);
+  private async detach(sessionId: string): Promise<void> {
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+    try {
+      if (session.release) await session.release();
+      else await session.close();
+    } catch (error) {
+      log.warn("detach: error releasing session", {
+        sessionId: sessionId.slice(0, 8),
+        error: String(error),
+      });
+    }
+    this.sessions.delete(sessionId);
+    this.sessionAgents.delete(sessionId);
   }
 
   /**
-   * Close sessions with a running SDK query that have been idle beyond the threshold.
-   * Session metadata remains persisted, so next prompt can lazy-resume.
+   * Release every session — for graceful shutdown. CLI panes survive the
+   * restart and are reused on next startup (no respawn, no startup probes).
+   */
+  async closeAll(): Promise<void> {
+    // Snapshot the ids first: `detach` mutates `this.sessions`.
+    await Promise.all(Array.from(this.sessions.keys()).map((id) => this.detach(id)));
+  }
+
+  /**
+   * Release sessions whose runtime is live but which have been idle beyond the
+   * threshold. Session metadata remains persisted, so the next prompt
+   * lazy-resumes.
+   *
+   * Uses `detach()`, not `close()`. Killing an idle CLI session destroys the
+   * tmux pane and the `claude` process inside it, and a `Monitor` is a child of
+   * that process — so a session watching a job that stays quiet past the
+   * threshold used to be reaped precisely when it was most needed, taking the
+   * monitor with it. Idle is not the same as finished. Releasing frees what we
+   * were holding and leaves the runtime to keep working.
    */
   async reapIdleRunningSessions(idleMs: number, nowMs: number = Date.now()): Promise<string[]> {
     if (!Number.isFinite(idleMs) || idleMs <= 0) {
@@ -408,12 +430,12 @@ export class SessionHost extends EventEmitter {
     }
 
     for (const { sessionId, idleForMs } of staleSessions) {
-      log.info("Idle reaper closing session", {
+      log.info("Idle reaper releasing session", {
         sessionId: sessionId.slice(0, 8),
         idleForMs,
         idleThresholdMs: idleMs,
       });
-      await this.close(sessionId);
+      await this.detach(sessionId);
     }
 
     return staleSessions.map((s) => s.sessionId);

@@ -42,6 +42,25 @@ class FakeSession extends EventEmitter {
   }
 }
 
+/**
+ * A provider that implements the optional `release()` hook — i.e. one whose
+ * runtime outlives us (the CLI provider, whose tmux pane and `claude` process
+ * keep running after we let go).
+ */
+class ReleasableFakeSession extends FakeSession {
+  public released = false;
+  public closed = false;
+
+  async release(): Promise<void> {
+    this.released = true;
+  }
+
+  async close(): Promise<void> {
+    this.closed = true;
+    this.emit("closed");
+  }
+}
+
 describe("SessionHost", () => {
   it("cleans up event buffers when a session closes", async () => {
     const fake = new FakeSession("s-cleanup");
@@ -160,7 +179,7 @@ describe("SessionHost", () => {
     ]);
   });
 
-  it("reaps stale sessions with running SDK process", async () => {
+  it("reaps a stale session whose provider has no release(), via close()", async () => {
     const stale = new FakeSession("s-stale");
     stale.isProcessRunning = true;
     stale.lastActivityIso = new Date(1_000).toISOString();
@@ -189,6 +208,33 @@ describe("SessionHost", () => {
     expect(closed).toEqual(["s-stale"]);
 
     expect(host.list().map((s) => (s as { id: string }).id)).toEqual(["s-fresh"]);
+  });
+
+  it("releases an idle session rather than killing its runtime", async () => {
+    const stale = new ReleasableFakeSession("s-monitor");
+    stale.isProcessRunning = true;
+    stale.lastActivityIso = new Date(1_000).toISOString();
+
+    const host = new SessionHost({
+      providers: {
+        claude: {
+          create: () => stale as unknown as AgentRuntimeSession,
+          resume: () => stale as unknown as AgentRuntimeSession,
+        },
+      },
+    });
+
+    await host.create({ cwd: "/repo", model: "claude-opus-4-6" });
+    const reaped = await host.reapIdleRunningSessions(300_000, 301_000);
+
+    expect(reaped).toEqual(["s-monitor"]);
+    expect(stale.released).toBe(true);
+    // close() would kill the tmux pane, and with it the `claude` process and
+    // anything running inside it — a Monitor watching a job that has simply
+    // gone quiet. Idle is not finished.
+    expect(stale.closed).toBe(false);
+    // Released still means untracked: we stop holding it either way.
+    expect(host.list()).toEqual([]);
   });
 
   it("persists only sessions with running SDK processes", async () => {

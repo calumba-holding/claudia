@@ -121,23 +121,32 @@ function reapOrphanTmuxPanes(staleMs: number): number {
   return killed;
 }
 
+// The only place these land in a durable artifact. Without this line, the only
+// way to tell whether an `anima.json` edit actually took effect is to correlate
+// the file's mtime against the process start time.
+log.info("Idle reaper configured", {
+  idleStaleMs: IDLE_STALE_MS,
+  reapIntervalMs: IDLE_REAP_INTERVAL_MS,
+  reapTmuxOrphans: REAP_TMUX_ORPHANS,
+});
+
 let idleReapRunning = false;
 const idleReapTimer = setInterval(async () => {
   if (idleReapRunning) return;
   idleReapRunning = true;
   try {
     if (ctx.sessionHost.reapIdleRunningSessions) {
-      const closedIds = await ctx.sessionHost.reapIdleRunningSessions(IDLE_STALE_MS);
-      if (closedIds.length > 0) {
+      const releasedIds = await ctx.sessionHost.reapIdleRunningSessions(IDLE_STALE_MS);
+      if (releasedIds.length > 0) {
         for (const [, client] of ctx.clients) {
-          for (const sessionId of closedIds) {
+          for (const sessionId of releasedIds) {
             client.subscribedSessions.delete(sessionId);
           }
         }
-        log.info("Auto-closed idle SDK sessions", {
+        log.info("Released idle sessions", {
           idleMs: IDLE_STALE_MS,
-          count: closedIds.length,
-          sessions: closedIds.map((id) => id.slice(0, 8)),
+          count: releasedIds.length,
+          sessions: releasedIds.map((id) => id.slice(0, 8)),
         });
       }
     }
